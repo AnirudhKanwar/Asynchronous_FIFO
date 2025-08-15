@@ -1,91 +1,120 @@
-`include "asyncfifo.v"
-module async_fifo_TB;
-
-  parameter DATA_WIDTH = 8;
-
-  wire [DATA_WIDTH-1:0] dataout;
-  wire full;
-  wire empty;
-  reg [DATA_WIDTH-1:0] datain;
-  reg w_en, wrclk, wrst;
-  reg r_en, rclk, rrst;
+timescale 1ns / 1ps
 
 
-
-  asynchronous_fifo asf (wrclk,wrst,rclk,rrst,w_en,r_en,datain,dataout,full,empty);
-
-  always #7 wrclk = ~wrclk;
-  always #37 rclk = ~rclk;
+module fifo(rst,ren,wen,wclk,rclk,wr_data,rd_data,full,empty,overflow,underflow);
+  input ren,wen;
+  input rst,wclk,rclk;
+  parameter fifo_width = 8;
+  parameter fifo_depth = 8;
+  parameter address_size = 3;
+  reg [address_size-1:0]rd_ptr,wr_ptr;
+  input [fifo_width-1:0]wr_data;
+  output reg [fifo_width-1:0]rd_data;
+  output reg full;
+  output reg empty;
+  output reg overflow;
+  output reg underflow;
+  reg [address_size:0]rd_ptr_b2g;
+  reg [address_size:0]wr_ptr_b2g;
+  reg [address_size:0]rd_ptr_sy1, rd_ptr_sy2;
+  reg [address_size:0]wr_ptr_sy1, wr_ptr_sy2;
+  reg [address_size:0]wr_ptr_sy2_g2b,rd_ptr_sy2_g2b;
+  reg [fifo_width-1:0]mem[fifo_depth-1:0];
   
-  initial begin
-    wrclk = 1'b0; wrst = 1'b0;
-    w_en = 1'b0;
-    datain <= 0;
+ 
+  always @(*)
+  begin
+    if(rst) begin 
+    rd_ptr<=0;
+    wr_ptr<=0;
+    underflow<=0;
+     overflow<=0;
+     full <=0;
+     empty <=1;
+    end
     
-    repeat(10) @(posedge wrclk);
-    wrst = 1'b1;
-
-    repeat(2) begin
-      for (integer i=0; i<30; i++) begin
-        @(posedge wrclk) 
-        if (!full) begin 
-        w_en = (i%2 == 0)? 1'b1 : 1'b0; 
-        datain = (w_en) ? $random: datain;
-        end
+    end
+  always @(posedge wclk)
+    begin
+          if(wen && !full)
+          begin
+          mem[wr_ptr]<=wr_data;
+            wr_ptr<= wr_ptr+1;
+           
+            end
+    end
+  
+  always @(posedge rclk)
+    begin
+          if(ren && !empty)
+          begin
+          rd_data<= mem[rd_ptr];
+        rd_ptr <= rd_ptr+1;
+          end
        
-      end
-      end
+    end    
   
-    
-  end
-
-  initial begin
-    rclk = 1'b0; rrst = 1'b0;
-    r_en = 1'b0;
-
-    repeat(20) @(posedge rclk);
-    rrst = 1'b1;
-
-    repeat(2) begin
-      for (integer i=0; i<30; i++) begin
-        @(posedge rclk) 
-        if (!empty) begin
-        r_en = (i%2 == 0)? 1'b1 : 1'b0;
+  always @(posedge rclk )
+  begin
+    empty<=(wr_ptr_sy2_g2b[address_size:0] == rd_ptr[address_size:0])?1:0;
+       end
+     
+  
+  always @(posedge wclk)
+  begin
+ 
+    full<=({~wr_ptr[address_size],wr_ptr[address_size-1:0]} == rd_ptr_sy2_g2b[address_size:0])?1:0;
+      
      end
-      #50;
+ 
+  always @(posedge rclk )
+    begin 
+      if(ren && empty)
+        underflow <=1;
+      else
+        underflow<=0;
+    end
+  
+  always @(posedge wclk or posedge rst)
+    begin 
+      if(wen && full)
+        overflow <=1;
+      else
+        overflow<=0;
     end
 
-    repeat(2) begin
-      for (integer i=0; i<30; i++) begin
-        @(posedge wrclk) 
-        if (!full) begin 
-        w_en = (i%2 == 0)? 1'b1 : 1'b0;
-        datain = (w_en) ? $random: datain; 
+  always @(*)
+    begin 
+  rd_ptr_b2g <= rd_ptr^(rd_ptr>>1);
+  wr_ptr_b2g <= wr_ptr^(wr_ptr>>1);
+    end
+  
+  always @(posedge wclk)
+    begin 
+      rd_ptr_sy1 <= rd_ptr_b2g;
+      rd_ptr_sy2 <= rd_ptr_sy1;
+    end
+  
+  always @(posedge rclk)
+    begin 
+      wr_ptr_sy1 <= wr_ptr_b2g;
+      wr_ptr_sy2 <= wr_ptr_sy1;
+    end
+  integer i;
+  always @(*)
+        begin 
+      wr_ptr_sy2_g2b[address_size] <= wr_ptr_sy2[address_size];
+      
+      for( i = address_size - 1 ; i>=0;i=i-1)
+        wr_ptr_sy2_g2b[i] <= wr_ptr_sy2_g2b[i+1]^wr_ptr_sy2[i];
         end
-        
-      end
-      end
 
-      repeat(2) begin
-      for (integer i=0; i<30; i++) begin
-        @(posedge rclk) 
-        if (!empty) begin
-        r_en = (i%2 == 0)? 1'b1 : 1'b0;
-     end
-      #50;
-    end
-
-   
-
-    
-  end
+  always @(*)
+        begin 
+      rd_ptr_sy2_g2b[address_size] <= rd_ptr_sy2[address_size];
+      
+      for(i= address_size - 1 ; i>=0;i = i-1)
+        rd_ptr_sy2_g2b[i]<= rd_ptr_sy2_g2b[i+1]^rd_ptr_sy2[i];
+       end
   
-#8000 $finish;
-end 
-end
-initial
-begin
-$dumpfile("dcfifo.vcd");
-$dumpvars(0,async_fifo_TB);
-end
 endmodule
